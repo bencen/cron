@@ -7,14 +7,17 @@ import (
 	"time"
 )
 
+type entries []*Entry
+
 // Cron keeps track of any number of entries, invoking the associated func as
 // specified by the schedule. It may be started, stopped, and the entries may
 // be inspected while running.
 type Cron struct {
-	entries  []*Entry
+	entries  entries
 	stop     chan struct{}
 	add      chan *Entry
-	snapshot chan []*Entry
+	remove   chan string
+	snapshot chan entries
 	running  bool
 	ErrorLog *log.Logger
 	location *time.Location
@@ -47,6 +50,9 @@ type Entry struct {
 
 	// The Job to run.
 	Job Job
+
+	// Unique name to identify the Entry so as to be able to remove it later.
+	Name string
 }
 
 // byTime is a wrapper for sorting the entry array by time
@@ -78,8 +84,9 @@ func NewWithLocation(location *time.Location) *Cron {
 	return &Cron{
 		entries:  nil,
 		add:      make(chan *Entry),
+		remove:   make(chan string),
 		stop:     make(chan struct{}),
-		snapshot: make(chan []*Entry),
+		snapshot: make(chan entries),
 		running:  false,
 		ErrorLog: nil,
 		location: location,
@@ -106,6 +113,30 @@ func (c *Cron) AddJob(spec string, cmd Job) error {
 	return nil
 }
 
+// RemoveJob removes a Job from the Cron based on name.
+func (c *Cron) RemoveJob(name string) {
+	if !c.running {
+		i := c.entries.pos(name)
+
+		if i == -1 {
+			return
+		}
+
+		c.entries = c.entries[:i+copy(c.entries[i:], c.entries[i+1:])]
+		return
+	}
+
+	c.remove <- name
+}
+
+func (entrySlice entries) pos(name string) int {
+	for p, e := range entrySlice {
+		if e.Name == name {
+			return p
+		}
+	}
+	return -1
+}
 // Schedule adds a Job to the Cron to be run on the given schedule.
 func (c *Cron) Schedule(schedule Schedule, cmd Job) {
 	entry := &Entry{
@@ -113,6 +144,10 @@ func (c *Cron) Schedule(schedule Schedule, cmd Job) {
 		Job:      cmd,
 	}
 	if !c.running {
+		i := c.entries.pos(entry.Name)
+		if i != -1 {
+			return
+		}
 		c.entries = append(c.entries, entry)
 		return
 	}
@@ -204,8 +239,21 @@ func (c *Cron) run() {
 			case newEntry := <-c.add:
 				timer.Stop()
 				now = c.now()
+				i := c.entries.pos(newEntry.Name)
+				if i != -1 {
+					break
+				}
 				newEntry.Next = newEntry.Schedule.Next(now)
 				c.entries = append(c.entries, newEntry)
+
+			case name := <-c.remove:
+				i := c.entries.pos(name)
+
+				if i == -1 {
+					break
+				}
+
+				c.entries = c.entries[:i+copy(c.entries[i:], c.entries[i+1:])]
 
 			case <-c.snapshot:
 				c.snapshot <- c.entrySnapshot()
