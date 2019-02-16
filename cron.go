@@ -99,17 +99,17 @@ type FuncJob func()
 func (f FuncJob) Run() { f() }
 
 // AddFunc adds a func to the Cron to be run on the given schedule.
-func (c *Cron) AddFunc(spec string, cmd func()) error {
-	return c.AddJob(spec, FuncJob(cmd))
+func (c *Cron) AddFunc(spec string, cmd func(), name string) error {
+	return c.AddJob(spec, FuncJob(cmd), name)
 }
 
-// AddJob adds a Job to the Cron to be run on the given schedule.
-func (c *Cron) AddJob(spec string, cmd Job) error {
+// AddFunc adds a Job to the Cron to be run on the given schedule.
+func (c *Cron) AddJob(spec string, cmd Job, name string) error {
 	schedule, err := Parse(spec)
 	if err != nil {
 		return err
 	}
-	c.Schedule(schedule, cmd)
+	c.Schedule(schedule, cmd, name)
 	return nil
 }
 
@@ -117,11 +117,9 @@ func (c *Cron) AddJob(spec string, cmd Job) error {
 func (c *Cron) RemoveJob(name string) {
 	if !c.running {
 		i := c.entries.pos(name)
-
 		if i == -1 {
 			return
 		}
-
 		c.entries = c.entries[:i+copy(c.entries[i:], c.entries[i+1:])]
 		return
 	}
@@ -137,12 +135,15 @@ func (entrySlice entries) pos(name string) int {
 	}
 	return -1
 }
+
 // Schedule adds a Job to the Cron to be run on the given schedule.
-func (c *Cron) Schedule(schedule Schedule, cmd Job) {
+func (c *Cron) Schedule(schedule Schedule, cmd Job, name string) {
 	entry := &Entry{
 		Schedule: schedule,
 		Job:      cmd,
+		Name:     name,
 	}
+
 	if !c.running {
 		i := c.entries.pos(entry.Name)
 		if i != -1 {
@@ -296,6 +297,7 @@ func (c *Cron) entrySnapshot() []*Entry {
 			Next:     e.Next,
 			Prev:     e.Prev,
 			Job:      e.Job,
+			Name:     e.Name,
 		})
 	}
 	return entries
